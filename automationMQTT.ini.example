@@ -1,0 +1,4 @@
+[automation]
+mqttserver=127.0.0.1
+mqttusername=""
+mqttpassword=""
