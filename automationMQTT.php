@@ -22,19 +22,26 @@ $mqtt = new phpMQTT($server, $port, $client_id);
 
 $lastgasdatetime = "";
 
-if(!$mqtt->connect(true, NULL, $username, $password)) {
-	exit(1);
-}
+while (1)
+{
+	while(!$mqtt->connect(true, NULL, $username, $password))
+	{
+		sleep(10);
+	}
 
 echo "Connected to mqtt server...\n";
 $topics = array();
 $topics['home/ESP_WATERMETER/m3'] = array("qos" => 0, "function" => "mqtt_watermeter");
 $topics['home/ESP_BADKAMER/dht22/humidity'] = array("qos" => 0, "function" => "mqtt_humidity");
+$topics['home/ESP_BADKAMER/dht22/temperature'] = array("qos" => 0, "function" => "mqtt_heating");
 $topics['home/ESP_SLAAPKAMER2/dht22/humidity'] = array("qos" => 0, "function" => "mqtt_humidity");
 $topics['home/ESP_SLAAPKAMER2/dht22/temperature'] = array("qos" => 0, "function" => "mqtt_cooldown");
 $topics['home/ESP_SLAAPKAMER2/mhz19/co2'] = array("qos" => 0, "function" => "mqtt_co2");
 $topics['home/buienradar/actueel_weer/weerstations/weerstation/6370/temperatuurGC'] = array("qos" => 0, "function" => "mqtt_cooldown");
+$topics['home/ESP_WEATHER/temperature'] = array("qos" => 0, "function" => "mqtt_heating");
+$topics['home/ESP_OPENTHERM/thermostat/ch/water/setpoint'] = array("qos" => 0, "function" => "mqtt_heating");
 $mqtt->subscribe($topics, 0);
+$mqtt->publish("home/ESP_TUIN/setrelay/0", "1", 1, 1);
 
 while($mqtt->proc()){
 	usleep(10000);
@@ -72,9 +79,63 @@ while($mqtt->proc()){
 	}
 
 }
-
+}
 
 $mqtt->close();
+
+function mqtt_heating($topic, $msg)
+{
+	global $mqtt;
+	static $watertemp = 25;
+	static $outsidetemp = "-";
+	static $bathroomtemp = "-";
+	if ($topic == 'home/ESP_WEATHER/temperature')
+	{
+		$watertemp = 0;
+		$outsidetemp = $msg;
+/*		if ($msg < 15) $watertemp = 20;
+		if ($msg < 5) $watertemp = 25;
+		if ($msg < -5) $watertemp = 30;
+		if ($msg < -10) $watertemp = 35;
+		if ($msg < -15) $watertemp = 40;*/
+	}
+
+	if ($topic == 'home/ESP_BADKAMER/dht22/temperature')
+	{
+		$bathroomtemp = $msg;
+	}
+	
+	if ($outsidetemp != "-")
+	{
+		$watertemp = (((-$outsidetemp)/1) + 35);
+		if ($watertemp < 20) $watertemp = 20;
+		if ($outsidetemp > 18) $watertemp = 0;
+		if ($bathroomtemp != "-")
+		{
+			if ($bathroomtemp > 21) $watertemp = 0;
+		}
+		if ($watertemp < 20) $watertemp = 0;
+	}
+	
+	if ($topic == 'home/ESP_OPENTHERM/thermostat/ch/water/setpoint')
+	{
+		echo ($topic."=".$msg."\n");
+		if ($msg <= 15)
+		{
+			// If thermostat doesn't request heat, disable floorpump
+			$mqtt->publishwhenchanged("home/SONOFFS20_002/setrelay/0", "0", 1, 1);
+		}
+		else
+		{
+			// If thermostat requests heated water enable floorpump
+			$mqtt->publishwhenchanged("home/SONOFFS20_002/setrelay/0", "1", 1, 1);
+		}
+	}
+	if ($watertemp > 50) $watertemp = 50; // Maximize watertemp because floorheating has no limit
+	echo ("OUTSIDE TEMP=".$outsidetemp." BATHROOM TEMP=".$bathroomtemp." CH WATERTEMP=".$watertemp."\n");
+	$mqtt->publishwhenchanged("home/ESP_OPENTHERM/setchwatertemperature", round($watertemp), 1, 1);
+}
+
 
 function mqtt_watermeter($topic, $msg)
 {
@@ -163,7 +224,7 @@ function mqtt_co2($topic, $msg){
 	{
 		$co2=$mqttdata['home/ESP_SLAAPKAMER2/mhz19/co2'];
 		// If a counter has changed recalculate values
-		if ($co2 < 800)
+		if ($co2 < 1000)
 	        {
         		$fanspeed = 0;
 		}
@@ -171,7 +232,7 @@ function mqtt_co2($topic, $msg){
 		{
 			$fanspeed = 2;
 	        }
-	        else if (($co2 < 1000 && $fanspeed == 2) || ($co2 > 1000 && $fanspeed == 0))
+	        else if (($co2 < 1100 && $fanspeed == 2) || ($co2 > 1100 && $fanspeed == 0))
 	        {
         		$fanspeed = 1;
 		}
