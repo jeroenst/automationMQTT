@@ -31,15 +31,16 @@ while (1)
 
 echo "Connected to mqtt server...\n";
 $topics = array();
-$topics['home/ESP_WATERMETER/m3'] = array("qos" => 0, "function" => "mqtt_watermeter");
+$topics['home/ESP_WATERMETER/water/liter'] = array("qos" => 0, "function" => "mqtt_watermeter");
 $topics['home/ESP_BADKAMER/dht22/humidity'] = array("qos" => 0, "function" => "mqtt_humidity");
 $topics['home/ESP_BADKAMER/dht22/temperature'] = array("qos" => 0, "function" => "mqtt_heating");
 $topics['home/ESP_SLAAPKAMER2/dht22/humidity'] = array("qos" => 0, "function" => "mqtt_humidity");
 $topics['home/ESP_SLAAPKAMER2/dht22/temperature'] = array("qos" => 0, "function" => "mqtt_cooldown");
 $topics['home/ESP_SLAAPKAMER2/mhz19/co2'] = array("qos" => 0, "function" => "mqtt_co2");
-$topics['home/buienradar/actueel_weer/weerstations/weerstation/6370/temperatuurGC'] = array("qos" => 0, "function" => "mqtt_cooldown");
-$topics['home/ESP_WEATHER/temperature'] = array("qos" => 0, "function" => "mqtt_heating");
-$topics['home/ESP_OPENTHERM/thermostat/ch/water/setpoint'] = array("qos" => 0, "function" => "mqtt_heating");
+$topics['home/ESP_WEATHER/temperature'] = array("qos" => 0, "function" => "mqtt_cooldown");
+$topics['home/ESP_OPENTHERM/thermostat/temperature'] = array("qos" => 0, "function" => "mqtt_livingroomheating");
+$topics['home/ESP_OPENTHERM/thermostat/setpoint'] = array("qos" => 0, "function" => "mqtt_livingroomheating");
+$topics['home/washing_machine/power'] = array("qos" => 0, "function" => "mqtt_washingmachine");
 $mqtt->subscribe($topics, 0);
 $mqtt->publish("home/ESP_TUIN/setrelay/0", "1", 1, 1);
 
@@ -86,18 +87,13 @@ $mqtt->close();
 function mqtt_heating($topic, $msg)
 {
 	global $mqtt;
-	static $watertemp = 25;
+	static $watertemp = 10;
 	static $outsidetemp = "-";
 	static $bathroomtemp = "-";
 	if ($topic == 'home/ESP_WEATHER/temperature')
 	{
 		$watertemp = 0;
 		$outsidetemp = $msg;
-/*		if ($msg < 15) $watertemp = 20;
-		if ($msg < 5) $watertemp = 25;
-		if ($msg < -5) $watertemp = 30;
-		if ($msg < -10) $watertemp = 35;
-		if ($msg < -15) $watertemp = 40;*/
 	}
 
 	if ($topic == 'home/ESP_BADKAMER/dht22/temperature')
@@ -105,86 +101,96 @@ function mqtt_heating($topic, $msg)
 		$bathroomtemp = $msg;
 	}
 	
-	if ($outsidetemp != "-")
+	if (($outsidetemp != "-") && ($bathroomtemp != "-"))
 	{
 		$watertemp = (((-$outsidetemp)/1) + 35);
 		if ($watertemp < 20) $watertemp = 20;
 		if ($outsidetemp > 18) $watertemp = 0;
 		if ($bathroomtemp != "-")
 		{
-			if ($bathroomtemp > 21) $watertemp = 0;
+			if ($bathroomtemp > 21) $watertemp = 10;
 		}
-		if ($watertemp < 20) $watertemp = 0;
+		if ($watertemp < 20) $watertemp = 10;
 	}
 	
-	if ($topic == 'home/ESP_OPENTHERM/thermostat/ch/water/setpoint')
-	{
-		echo ($topic."=".$msg."\n");
-		if ($msg <= 15)
-		{
-			// If thermostat doesn't request heat, disable floorpump
-			$mqtt->publishwhenchanged("home/SONOFFS20_002/setrelay/0", "0", 1, 1);
-		}
-		else
-		{
-			// If thermostat requests heated water enable floorpump
-			$mqtt->publishwhenchanged("home/SONOFFS20_002/setrelay/0", "1", 1, 1);
-		}
-	}
 	if ($watertemp > 50) $watertemp = 50; // Maximize watertemp because floorheating has no limit
 	echo ("OUTSIDE TEMP=".$outsidetemp." BATHROOM TEMP=".$bathroomtemp." CH WATERTEMP=".$watertemp."\n");
 	$mqtt->publishwhenchanged("home/ESP_OPENTHERM/setchwatertemperature", round($watertemp), 1, 1);
 }
 
 
-function mqtt_watermeter($topic, $msg)
+function mqtt_livingroomheating($topic, $msg)
 {
-	static $m3_begin = 0;
-	static $m3_begin_time = 0;
-	static $m3_max = 0.1;
-	global $mqttdata;
-	$mqttdata[$topic] = $msg;
-	if ($m3_begin == 0) 
-	{
-		$m3_begin = $msg;
-		$m3_begin_time = time();
-	}
+	global $mqtt;
+	static $setpoint = "-";
+	static $temperature = "-";
+	if ($topic == 'home/ESP_OPENTHERM/thermostat/temperature') $temperature = $msg;
+	if ($topic == 'home/ESP_OPENTHERM/thermostat/setpoint') $setpoint = $msg;
+	echo ("livingroom temperature=".$temperature." setpoint=".$setpoint."\n");
 	
-	echo ("Watermeter=".$msg." Watermeterbegin=".$m3_begin."\n");
-	
-	if ($m3_begin != $msg)
+	if (($temperature != "-") && ($setpoint != "-"))
 	{
-		if ((time() - 3600) > $m3_begin_time)
+		if ($temperature < $setpoint)
 		{
-			$m3_begin_time = time();
-			$m3_begin = $msg;
+			$mqtt->publishwhenchanged("home/SONOFF_FLOORHEATING/setvalve", "1", 1, 1);
 		}
-		if (($m3_begin + $m3_max) <= $msg)
+		else
 		{
-			echo ("Sending water alert\n");
-			mail("jeroensteenhuis80@gmail.com", "Hoog water gebruik", "Water gebruik meer dan ".($m3_max*1000)." liter binnen een uur, huidige stand is ".$msg);
-			$m3_begin_time = time();
-			$m3_begin = $msg;
+			$mqtt->publishwhenchanged("home/SONOFF_FLOORHEATING/setvalve", "0", 1, 1);
 		}
 	}
 }
+
+function mqtt_watermeter($topic, $msg)
+{
+	static $liter_begin = 0;
+	static $liter_begin_time = 0;
+	static $liter_max = 100;
+	static $liter_used = 0;
+	global $mqttdata;
+	$mqttdata[$topic] = $msg;
+
+	if (((time() - 3600) > $liter_begin_time) || ($liter_begin == 0))
+	{
+		$liter_begin = $msg;
+		$liter_begin_time = time();
+	}
+
+	$liter_used = $msg - $liter_begin;
+	
+	echo ("Watermeter=".$msg." Watermeterbegin=".$liter_begin." Watermetertime=".$liter_begin_time." literused=".$liter_used." litermax=".$liter_max."\n");
+	
+	if ($liter_begin != $msg)
+	{
+		if ($liter_used > $liter_max)
+		{
+			echo ("Sending water alert\n");
+			mail("jeroensteenhuis80@gmail.com", "Hoog water gebruik", "Water gebruik meer dan ".($liter_max*1000)." liter binnen een uur, huidige stand is ".$msg);
+			notify_clients("Water gebruik meer dan ".($liter_max*1000)." liter binnen een uur, huidige stand is ".$msg);
+			$liter_begin_time = time();
+			$liter_begin = $msg;
+		}
+	}
+}
+
 function mqtt_cooldown($topic, $msg){
+	if ($topic == "home/ESP_WEATHER/temperature") mqtt_heating($topic, $msg);
 	global $mqtt;
 	global $mqttdata;
 	$mqttdata[$topic] = $msg;
 
 	echo "$topic = $msg\n";
-	if ((isset($mqttdata['home/ESP_SLAAPKAMER2/dht22/temperature'])) && (isset($mqttdata['home/buienradar/actueel_weer/weerstations/weerstation/6370/temperatuurGC'])))
+	if ((isset($mqttdata['home/ESP_SLAAPKAMER2/dht22/temperature'])) && (isset($mqttdata['home/ESP_WEATHER/temperature'])))
 	{
 		if ($mqttdata['home/ESP_SLAAPKAMER2/dht22/temperature'] >= 21.5)
 		{
-		  if ($mqttdata['home/ESP_SLAAPKAMER2/dht22/temperature'] > $mqttdata['home/buienradar/actueel_weer/weerstations/weerstation/6370/temperatuurGC']+1) 
+		  if ($mqttdata['home/ESP_SLAAPKAMER2/dht22/temperature'] > $mqttdata['home/ESP_WEATHER/temperature']+1) 
 		  {
 		  	echo ("slaapkamer te warm, start afkoelen...\n");
 		  	$fanspeed = 2;
 			setfanspeed("cooldown", 2);
 		  }
-		  else if ($mqttdata['home/ESP_SLAAPKAMER2/dht22/temperature'] <= $mqttdata['home/buienradar/actueel_weer/weerstations/weerstation/6370/temperatuurGC'])
+		  else if ($mqttdata['home/ESP_SLAAPKAMER2/dht22/temperature'] <= $mqttdata['home/ESP_WEATHER/temperature'])
 		  {
 		  	echo ("buiten warmer dan binnen, stop afkoelen...\n");
 		  	setfanspeed("cooldown", 0);
@@ -209,6 +215,25 @@ function mqtt_humidity($topic, $msg){
 	{
 		bathroom_fanspeed($mqttdata['home/ESP_BADKAMER/dht22/humidity'] ,$mqttdata['home/ESP_SLAAPKAMER2/dht22/humidity']);
 	}
+	
+}
+
+function mqtt_washingmachine($topic, $msg){
+	global $mqtt;
+	global $mqttdata;
+	$mqttdata[$topic] = $msg;
+
+	static $washing = 0;
+
+	echo "$topic = $msg\n";
+	
+	if ($msg > 100) $washing = 1;
+	if (($msg < 6) && ($washing == 1))
+	{
+		$washing = 0;
+		notify_clients("Wasmachine is klaar", '11');
+	}
+	
 	
 }
 
@@ -284,4 +309,17 @@ function setfanspeed($sourceid, $newfanspeed)
 		
 		$mqtt->publishwhenchanged("home/ESP_DUCOBOX/setfan", $fanspeed, 0, 1);
 	//}
+}
+
+
+function notify_clients($message)
+{
+$ch = curl_init();
+curl_setopt($ch, CURLOPT_URL, 'https://hooks.slack.com/services/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' );
+curl_setopt($ch, CURLOPT_POST, 1);
+curl_setopt($ch, CURLOPT_POSTFIELDS, '{"text":"'.$message.'"}');
+curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false );
+$response = curl_exec($ch);
+curl_close($ch);
 }
