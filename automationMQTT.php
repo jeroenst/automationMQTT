@@ -46,10 +46,10 @@ $mqtt->publish("home/ESP_TUIN/setrelay/0", "1", 1, 1);
 
 while($mqtt->proc()){
 	usleep(10000);
-	if ((date('n') > 4) && (date('n') < 10))
+	if ((date('n') > 3) && (date('n') < 10))
 	{
-		// UV lamp is on from may till september from 16:00 till 17:00, pump is always on
-		if ((date('H') >= 9) && (date('H') <= 11))
+		// UV lamp is on from april till september from 9:00 till 12:00, pump is always on
+		if ((date('H') >= 9) && (date('H') < 12))
 		{
 			$mqtt->publishwhenchanged("home/ESP_TUIN/setrelay/0", "1", 1, 1);
 			$mqtt->publishwhenchanged("home/ESP_TUIN/setrelay/1", "0", 1, 1);
@@ -64,6 +64,9 @@ while($mqtt->proc()){
 	}
 	else
 	{
+		$mqtt->publishwhenchanged("home/ESP_TUIN/setrelay/0", "1", 1, 1);
+		$mqtt->publishwhenchanged("home/ESP_TUIN/setrelay/1", "0", 1, 1);
+		$mqtt->publishwhenchanged("home/ESP_TUIN/setrelay/2", "0", 1, 1);
 /*		// From oktober till april pump is only on from 8:00 till 18:00, uv is always off
 		if ((date('H') > 7) && (date('H') < 18))
 		{
@@ -165,8 +168,8 @@ function mqtt_watermeter($topic, $msg)
 		if ($liter_used > $liter_max)
 		{
 			echo ("Sending water alert\n");
-			mail("jeroensteenhuis80@gmail.com", "Hoog water gebruik", "Water gebruik meer dan ".($liter_max*1000)." liter binnen een uur, huidige stand is ".$msg);
-			notify_clients("Water gebruik meer dan ".($liter_max*1000)." liter binnen een uur, huidige stand is ".$msg);
+			mail("jeroensteenhuis80@gmail.com", "Hoog water gebruik", "Water gebruik meer dan ".($liter_max)." liter binnen een uur, huidige stand is ".$msg);
+			notify_clients("Water gebruik meer dan ".($liter_max)." liter binnen een uur, huidige stand is ".$msg);
 			$liter_begin_time = time();
 			$liter_begin = $msg;
 		}
